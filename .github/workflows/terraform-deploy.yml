@@ -1,0 +1,73 @@
+name: Terraform Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "environments/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+
+    defaults:
+      run:
+        working-directory: environments/${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Setup
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Create CI variables
+        shell: bash
+        run: |
+          cat > terraform.auto.tfvars.json <<EOF
+          {
+            "tenant_id": "${{ secrets.AZURE_TENANT_ID }}",
+            "connectivity_subscription_id": "${{ secrets.CONNECTIVITY_SUBSCRIPTION_ID }}",
+            "platform_subscription_id": "${{ secrets.PLATFORM_SUBSCRIPTION_ID }}",
+            "identity_subscription_id": "${{ secrets.IDENTITY_SUBSCRIPTION_ID }}",
+            "workload_subscription_id": "${{ secrets.WORKLOAD_SUBSCRIPTION_ID }}",
+            "sandbox_subscription_id": "${{ secrets.SANDBOX_SUBSCRIPTION_ID }}"
+          }
+          EOF
+
+      - name: Terraform Plan
+        run: terraform plan -var-file=terraform.auto.tfvars.json -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
