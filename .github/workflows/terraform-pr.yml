@@ -1,0 +1,75 @@
+name: Terraform PR
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "environments/**"
+      - "bootstrap/**"
+      - ".github/workflows/**"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, prod]
+
+    defaults:
+      run:
+        working-directory: environments/${{ matrix.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Setup
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Trivy IaC Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          exit-code: 1
+          severity: HIGH,CRITICAL
+
+      - name: Create CI variables
+        shell: bash
+        run: |
+          cat > terraform.auto.tfvars.json <<EOF
+          {
+            "tenant_id": "${{ secrets.AZURE_TENANT_ID }}",
+            "connectivity_subscription_id": "${{ secrets.CONNECTIVITY_SUBSCRIPTION_ID }}",
+            "platform_subscription_id": "${{ secrets.PLATFORM_SUBSCRIPTION_ID }}",
+            "identity_subscription_id": "${{ secrets.IDENTITY_SUBSCRIPTION_ID }}",
+            "workload_subscription_id": "${{ secrets.WORKLOAD_SUBSCRIPTION_ID }}",
+            "sandbox_subscription_id": "${{ secrets.SANDBOX_SUBSCRIPTION_ID }}"
+          }
+          EOF
+
+      - name: Terraform Plan
+        run: terraform plan -var-file=terraform.auto.tfvars.json
