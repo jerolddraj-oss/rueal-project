@@ -1,37 +1,41 @@
 name: Terraform Deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "modules/**"
-      - "environments/**"
   workflow_dispatch:
     inputs:
       environment:
-        description: "Environment to deploy"
+        description: Target environment
         required: true
         type: choice
-        options:
-          - dev
-          - prod
+        options: [dev, prod]
+        default: dev
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
 
 permissions:
   id-token: write
   contents: read
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+env:
+  TF_IN_AUTOMATION: true
+  ARM_USE_OIDC: true
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     defaults:
       run:
-        working-directory: environments/${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
-
+        working-directory: environments/${{ inputs.environment }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
@@ -40,34 +44,41 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Terraform Setup
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
 
-      - name: Terraform Format
-        run: terraform fmt -check -recursive
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive ../../modules .
 
-      - name: Terraform Init
-        run: terraform init -backend-config=backend.hcl
+      - name: Terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ secrets.TFSTATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TFSTATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.TFSTATE_CONTAINER }}" \
+            -backend-config="key=landing-zone-${{ inputs.environment }}.tfstate"
 
-      - name: Terraform Validate
+      - name: Terraform validate
         run: terraform validate
 
-      - name: Create CI variables
-        shell: bash
-        run: |
-          cat > terraform.auto.tfvars.json <<EOF
-          {
-            "tenant_id": "${{ secrets.AZURE_TENANT_ID }}",
-            "connectivity_subscription_id": "${{ secrets.CONNECTIVITY_SUBSCRIPTION_ID }}",
-            "platform_subscription_id": "${{ secrets.PLATFORM_SUBSCRIPTION_ID }}",
-            "identity_subscription_id": "${{ secrets.IDENTITY_SUBSCRIPTION_ID }}",
-            "workload_subscription_id": "${{ secrets.WORKLOAD_SUBSCRIPTION_ID }}",
-            "sandbox_subscription_id": "${{ secrets.SANDBOX_SUBSCRIPTION_ID }}"
-          }
-          EOF
+      - name: Trivy IaC scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
 
-      - name: Terraform Plan
-        run: terraform plan -var-file=terraform.auto.tfvars.json -out=tfplan
+      - name: Terraform plan
+        run: terraform plan -input=false -out=tfplan
+        env:
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+          TF_VAR_root_management_group_id: ${{ secrets.AZURE_TENANT_ID }}
 
-      - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+      - name: Terraform apply
+        if: inputs.action == 'apply'
+        run: terraform apply -input=false -auto-approve tfplan

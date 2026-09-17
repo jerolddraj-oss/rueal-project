@@ -1,15 +1,10 @@
-# Bootstrap instructions
+# Bootstrap and first deployment
 
-Terraform cannot use an Azure Storage backend until the storage account and container exist. This repository therefore uses a small local-state bootstrap stack.
+## 1. Azure prerequisites
 
-## Step 1 — Sign in
+Use an Azure identity with permission to create the Terraform state resource group/storage account and, for the landing-zone deployment, permission to manage management groups, policy assignments, RBAC and resources in the target subscription.
 
-```powershell
-az login
-az account set --subscription "<BOOTSTRAP-SUBSCRIPTION-ID>"
-```
-
-## Step 2 — Deploy state storage
+Create the state store once:
 
 ```powershell
 cd bootstrap
@@ -20,46 +15,31 @@ terraform plan
 terraform apply
 ```
 
-Record the outputs:
+Use a globally unique lowercase storage account name. The bootstrap module creates a ZRS storage account, private state container, blob versioning and retention controls.
 
-```text
-resource_group_name
-storage_account_name
-container_name
-```
-
-## Step 3 — Configure environment backend
-
-Edit `environments/dev/backend.hcl`:
-
-```hcl
-resource_group_name  = "rg-tfstate"
-storage_account_name = "sttfstate12345"
-container_name       = "tfstate"
-key                  = "landing-zone/dev.tfstate"
-use_azuread_auth     = true
-```
-
-## Step 4 — Reinitialize
+## 2. Local deployment
 
 ```powershell
-cd ../environments/dev
+cd environments/dev
+Copy-Item terraform.tfvars.example terraform.tfvars
+# edit terraform.tfvars
 terraform init -backend-config=backend.hcl
+terraform fmt -check -recursive ../../modules .
+terraform validate
+terraform plan -var-file=terraform.tfvars
+terraform apply -var-file=terraform.tfvars
 ```
 
-If moving from local state to remote state:
+For production, use `environments/prod` and its separate state key.
 
-```powershell
-terraform init -migrate-state -backend-config=backend.hcl
-```
+## 3. Required values
 
-## Step 5 — Protect the state
+- `subscription_id`: target Azure subscription used for platform resources.
+- `tenant_id`: Microsoft Entra tenant ID.
+- `root_management_group_id`: tenant root management-group ID; normally the tenant ID when the tenant root group is being used.
+- Subscription ID lists: existing subscriptions to associate with Platform/Identity/Connectivity/Workloads/Sandbox.
+- CIDRs: must not overlap with on-premises, VPN or other spokes.
 
-The state file may contain sensitive values. Treat the storage account as a security boundary:
+## 4. Cost controls
 
-- restrict network access
-- enable blob versioning
-- enable soft delete
-- use RBAC
-- restrict owner/contributor permissions
-- monitor access
+For a lab, keep Firewall, Bastion, VPN/ER gateway and Automation disabled. Enable them only when needed. Policy is Audit by default.

@@ -1,86 +1,23 @@
-# Architecture and module responsibilities
+# Azure Landing Zone - Architecture
 
-## 1. Management Group hierarchy
+This implementation follows the supplied reference drawing and separates platform concerns from workload spokes.
 
-```text
-Tenant Root
-└── Landing Zone
-    ├── Platform
-    │   ├── Connectivity
-    │   ├── Identity
-    │   └── Management
-    ├── Workloads
-    │   ├── Dev
-    │   └── Prod
-    └── Sandbox
-```
+## Layers
 
-The hierarchy is implemented with `azurerm_management_group`. Existing subscriptions are attached with `azurerm_management_group_subscription_association`.
+1. **Management hierarchy** - Landing-Zone parent with Platform, Identity, Connectivity, Management, Workloads and Sandbox children. Existing subscriptions are associated to the correct management group; Terraform does not create billing subscriptions.
+2. **Hub network** - Central VNet with optional Azure Firewall, Bastion, VPN/ExpressRoute Gateway and Private DNS Resolver.
+3. **Spokes** - Dev/Prod/application VNets with workload subnets, NSGs, and optional default route to the hub firewall.
+4. **Policy** - Allowed locations and required tags assigned at the Landing-Zone management group. Start in Audit mode and move to Deny after testing.
+5. **Operations** - Log Analytics and Action Group, Recovery Services Vault, optional Automation Account.
+6. **Identity/Security** - User-assigned managed identity and RBAC-enabled Key Vault. Microsoft Entra tenant objects are intentionally not created by this baseline.
+7. **Workloads** - Resource-group containers for application projects. Application-specific compute/data modules can be added without changing the platform layer.
 
-## 2. Network flow
+## Traffic flow
 
-The hub contains:
+`Internet/On-premises -> Hub -> Azure Firewall -> Spoke` for inspected traffic. Spokes peer to the hub; the route table can send `0.0.0.0/0` to the firewall private IP.
 
-- Azure Firewall
-- Azure Bastion
-- DNS resolver
-- optional VPN Gateway
-- optional ExpressRoute Gateway
+For production, add explicit firewall network/application/NAT rules, private endpoints and Private DNS zones according to the application flows. Do not expose databases directly to the Internet.
 
-Each spoke is connected to the hub using VNet peering.
+## Subscription model
 
-For controlled egress, the spoke route table sends:
-
-```text
-0.0.0.0/0 -> Azure Firewall private IP
-```
-
-## 3. Security boundaries
-
-- NSGs on workload subnets
-- Azure Firewall for centralized network inspection
-- Bastion for administrative access
-- RBAC with least privilege
-- Azure Policy at management-group scope
-- Defender for Cloud is optional
-- No workload VM requires a public IP by default
-
-## 4. Policy model
-
-The policy module demonstrates audit-first controls:
-
-- Allowed locations
-- Require resource tags
-
-The assignment `enforcement_mode` is set to `DoNotEnforce` when `policy_effect = "Audit"`. After validation, set `policy_effect = "Deny"` to enforce the assignments.
-
-## 5. Disaster recovery
-
-The shared-services module creates a Recovery Services Vault and Automation Account. Backup policies and workload-specific replication should be added per workload RTO/RPO requirements. Azure Site Recovery is not enabled automatically because recovery plans are application-specific.
-
-## 6. Terraform state
-
-Each environment has its own Azure Storage backend:
-
-```text
-tfstate
-├── landing-zone/dev.tfstate
-└── landing-zone/prod.tfstate
-```
-
-Enable storage network restrictions/private endpoints where practical and use Entra ID/RBAC for state access.
-
-## 7. Production hardening checklist
-
-- Enable storage firewall/private endpoint for Terraform state.
-- Use GitHub OIDC rather than long-lived Azure client secrets.
-- Configure GitHub Environment approvals.
-- Enable branch protection and PR review.
-- Add Checkov or Microsoft Defender for DevOps if required.
-- Move policy controls from Audit to Deny only after testing.
-- Add Azure Firewall rules/application rules/network rules.
-- Add Private DNS zones and private endpoints for PaaS services.
-- Add Azure Monitor alerts and action groups.
-- Add backup policies and ASR recovery plans.
-- Add cost budgets.
-- Add Azure Policy initiatives aligned to the organization's compliance framework.
+Subscription creation is outside this repository. Put subscription IDs into the appropriate `*_subscription_ids` variable so the management-group module can associate them.

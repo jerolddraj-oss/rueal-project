@@ -1,0 +1,37 @@
+# Production example. Copy to terraform.tfvars and replace placeholders; never commit terraform.tfvars.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+tenant_id = "00000000-0000-0000-0000-000000000000"
+root_management_group_id = "00000000-0000-0000-0000-000000000000"
+environment = "prod"
+name_prefix = "alz-prod"
+platform_subscription_ids = []
+identity_subscription_ids = []
+connectivity_subscription_ids = []
+workload_subscription_ids = []
+sandbox_subscription_ids = []
+hub_address_space = ["10.100.0.0/16"]
+firewall_subnet_prefix = "10.100.0.0/24"
+bastion_subnet_prefix = "10.100.1.0/26"
+gateway_subnet_prefix = "10.100.2.0/27"
+dns_resolver_subnet_prefix = "10.100.3.0/28"
+enable_firewall = false
+enable_bastion = false
+enable_vpn_gateway = false
+enable_expressroute_gateway = false
+enable_default_route_to_firewall = false
+log_retention_days = 90
+enable_automation = false
+policy_effect = "Audit"
+tags = { Owner = "CloudPlatform", CostCenter = "CC0000" }
+spokes = {
+  prod = {
+    name = "alz-prod-spoke"
+    address_space = ["10.110.0.0/16"]
+    subnets = {
+      workload = { address_prefixes = ["10.110.1.0/24"] }
+      app = { address_prefixes = ["10.110.2.0/24"] }
+      data = { address_prefixes = ["10.110.3.0/24"] }
+    }
+  }
+}
+workload_resource_groups = ["rg-alz-prod-app1", "rg-alz-prod-app2"]

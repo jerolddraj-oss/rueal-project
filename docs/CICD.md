@@ -1,81 +1,66 @@
-# GitHub Actions CI/CD
+# CI/CD with GitHub Actions
 
-## Authentication model
+## Authentication
 
-Use GitHub Actions OIDC/federated identity with Azure. Do not store an Azure client secret in the repository.
+Use GitHub Actions OIDC instead of a long-lived Azure client secret. Create an Entra application/service principal with a federated credential for this repository and grant only the required Azure roles.
 
-```text
-GitHub repository
-      |
-      | OIDC token
-      v
-Microsoft Entra ID
-      |
-      v
-Azure deployment identity
-      |
-      v
-Landing Zone subscriptions
-```
-
-## GitHub Environment secrets
-
-Configure these in the `dev` and `prod` GitHub Environments:
+Configure these GitHub **Environment** secrets for both `dev` and `prod`:
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
-- `AZURE_SUBSCRIPTION_ID` (used by `azure/login`)
-- `CONNECTIVITY_SUBSCRIPTION_ID`
-- `PLATFORM_SUBSCRIPTION_ID`
-- `IDENTITY_SUBSCRIPTION_ID`
-- `WORKLOAD_SUBSCRIPTION_ID`
-- `SANDBOX_SUBSCRIPTION_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `TFSTATE_RESOURCE_GROUP`
+- `TFSTATE_STORAGE_ACCOUNT`
+- `TFSTATE_CONTAINER`
 
-For `prod`, configure required reviewers before enabling deployment.
+Use separate GitHub Environments and approval rules for production.
 
-## Pull request pipeline
+## Pipeline
 
-`.github/workflows/terraform-pr.yml`:
+`terraform-pr.yml` is intended for pull requests. It runs formatting, validation and Trivy IaC scanning. Keep real subscription values out of the repository.
 
-1. checkout
-2. Azure login with OIDC
-3. Terraform format check
-4. Terraform init
-5. Terraform validate
-6. Trivy IaC scan
-7. Terraform plan
+`terraform-deploy.yml` is manually triggered and accepts `dev` or `prod` plus `plan` or `apply`. It performs:
 
-The PR workflow does not apply changes.
+1. Checkout
+2. Azure OIDC login
+3. Terraform installation
+4. Format check
+5. Remote backend initialization
+6. Terraform validation
+7. Trivy IaC scan
+8. Terraform plan
+9. Terraform apply (only when `action=apply`)
 
-## Deployment pipeline
+## Recommended promotion flow
 
-`.github/workflows/terraform-deploy.yml`:
-
-- runs on pushes to `main`
-- can also be started manually
-- validates the selected environment
-- creates a Terraform plan
-- applies the plan after the GitHub Environment approval gate
-
-## First-time setup
-
-1. Bootstrap Terraform state manually.
-2. Create the Azure federated identity.
-3. Assign required Azure RBAC.
-4. Create GitHub `dev` and `prod` environments.
-5. Add the environment secrets listed above.
-6. Protect `main`.
-7. Create a PR.
-8. Confirm the plan and security scan.
-9. Merge to `main`.
-10. Approve the deployment environment.
-
-## Local commands
-
-```powershell
-terraform fmt -recursive
-terraform init -backend-config=backend.hcl
-terraform validate
-terraform plan -var-file=terraform.tfvars
-terraform apply -var-file=terraform.tfvars
+```text
+Developer branch
+      |
+      v
+Pull Request --> fmt + validate + Trivy
+      |
+      v
+Merge to main
+      |
+      v
+Deploy: dev / plan
+      |
+      v
+Review plan + approve GitHub Environment
+      |
+      v
+Deploy: dev / apply
+      |
+      v
+Deploy: prod / plan
+      |
+      v
+Production Environment approval
+      |
+      v
+Deploy: prod / apply
 ```
+
+## Important
+
+The deployment workflow uses `TF_VAR_*` values for the target subscription and tenant. Other configuration should be supplied through a protected tfvars source or GitHub Environment variables when moving beyond the example baseline. Never commit secrets, service-principal credentials, or real `.tfvars` files.
