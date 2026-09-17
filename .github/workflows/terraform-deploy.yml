@@ -78,6 +78,8 @@ jobs:
           TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
           TF_VAR_root_management_group_id: ${{ secrets.AZURE_TENANT_ID }}
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_name_prefix: alz-${{ inputs.environment }}
 
       - name: Terraform apply
         if: inputs.action == 'apply'
