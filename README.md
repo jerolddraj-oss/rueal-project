@@ -1,20 +1,27 @@
 # Azure Landing Zones with Terraform
 
-A production-oriented Azure Landing Zone reference implementation based on the supplied architecture:
+A modular Azure Landing Zone reference implementation based on the supplied architecture drawing.
+
+## What is included
 
 - Management Group / Landing Zone hierarchy
 - Platform, Identity, Connectivity, Workload and Sandbox subscription grouping
 - Hub-and-spoke networking
 - Azure Firewall, Bastion and optional VPN/ExpressRoute gateways
-- Central monitoring with Log Analytics
-- Shared services for backup and automation
-- Azure Policy guardrails
-- Optional Microsoft Defender for Cloud
-- Standard RBAC patterns
+- Private DNS Resolver in the hub
+- Dev/Prod spoke templates with workload subnets and NSGs
+- Central Log Analytics workspace and Monitor Action Group
+- Recovery Services Vault and optional Automation Account
+- User-assigned managed identity
+- RBAC-enabled Azure Key Vault
+- Azure Policy guardrails for allowed locations and required tags
+- Generic RBAC assignment module
+- Workload resource-group module
 - GitHub Actions CI/CD using Azure federated identity (OIDC)
 - Trivy IaC scanning
+- Separate Terraform state keys for Dev and Prod
 
-> **Important:** Azure subscriptions themselves are normally created by the billing/tenant process. This repository organizes existing subscription IDs into the Landing Zone management-group hierarchy. Subscription creation can be automated separately when the required billing permissions/API are available.
+> **Important:** Azure subscriptions themselves are normally created by the billing/tenant process. This repository organizes existing subscription IDs into the Landing Zone management-group hierarchy. Subscription creation is intentionally outside the Terraform baseline.
 
 ## Repository structure
 
@@ -37,11 +44,15 @@ A production-oriented Azure Landing Zone reference implementation based on the s
 │   │   ├── backend.hcl
 │   │   ├── main.tf
 │   │   ├── variables.tf
+│   │   ├── outputs.tf
+│   │   ├── versions.tf
 │   │   └── terraform.tfvars.example
 │   └── prod/
 │       ├── backend.hcl
 │       ├── main.tf
 │       ├── variables.tf
+│       ├── outputs.tf
+│       ├── versions.tf
 │       └── terraform.tfvars.example
 └── modules/
     ├── hub-network/
@@ -56,21 +67,32 @@ A production-oriented Azure Landing Zone reference implementation based on the s
     └── workload/
 ```
 
-## Design principles
+## Architecture mapping
 
-1. **Platform services are centralized** in the hub and platform subscriptions.
-2. **Workloads stay in spokes** and are isolated by subnet, NSG and routing controls.
-3. **Internet egress can be inspected** through Azure Firewall using a spoke `0.0.0.0/0` route.
-4. **Management access uses Azure Bastion**, avoiding public IPs on workload VMs.
-5. **Policy starts in Audit mode** for the supplied examples. Move controls to Deny only after testing.
-6. **Secrets never live in Git.** Use GitHub OIDC and environment/secret management.
-7. **Remote state is stored in Azure Storage** with state locking.
+| Drawing area | Terraform implementation |
+|---|---|
+| Subscription / Project Structure | `modules/management-groups` + environment subscription ID lists |
+| Hub VNet | `modules/hub-network` |
+| Dev / Prod / App spokes | `modules/spoke-network` |
+| Shared services | `modules/shared-services` |
+| Monitoring | `modules/monitoring` |
+| Identity | `modules/identity` |
+| Security | `modules/security` |
+| Policy framework | `modules/policy` |
+| RBAC | `modules/role-assignments` |
+| Workload resource groups | `modules/workload` |
 
-## Quick start
+## Deployment sequence
 
-### 1. Bootstrap Terraform state
+1. Bootstrap the remote Terraform state storage account.
+2. Configure the Dev/Prod environment values.
+3. Run local `fmt`, `init`, `validate` and `plan`.
+4. Configure GitHub OIDC and protected Environment secrets.
+5. Open a pull request: formatting, validation and Trivy run automatically.
+6. After merge, run `Terraform Deploy` with `plan` for the target environment.
+7. Review the plan and use the protected GitHub Environment approval before `apply`.
 
-Read [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md).
+## Local commands
 
 ```powershell
 cd bootstrap
@@ -79,58 +101,28 @@ terraform fmt -check
 terraform validate
 terraform plan
 terraform apply
-```
 
-### 2. Configure the environment
-
-Copy `environments/dev/terraform.tfvars.example` to a local `terraform.tfvars` and fill in your Azure subscription IDs and tenant ID. Do not commit the `.tfvars` file.
-
-### 3. Configure remote state
-
-Update `environments/dev/backend.hcl` with the bootstrap storage account name and initialize:
-
-```powershell
-cd environments/dev
+cd ../environments/dev
+Copy-Item terraform.tfvars.example terraform.tfvars
+# edit terraform.tfvars
 terraform init -backend-config=backend.hcl
-```
-
-### 4. Run locally
-
-```powershell
-terraform fmt -recursive
-terraform init -backend-config=backend.hcl
+terraform fmt -check -recursive ../../modules .
 terraform validate
 terraform plan -var-file=terraform.tfvars
 terraform apply -var-file=terraform.tfvars
 ```
 
-### 5. Run CI/CD
+## Design principles
 
-Follow [`docs/CICD.md`](docs/CICD.md).
-
-The pull-request workflow performs Terraform format/validation, Trivy IaC scanning and a plan. The deployment workflow performs the same checks and then applies the selected environment after the GitHub Environment approval gate.
+1. Platform services are centralized in the hub/platform layer.
+2. Workloads stay in spokes and are isolated with subnet and NSG controls.
+3. Spoke egress can be inspected through Azure Firewall using a default route to the firewall private IP.
+4. Administrative VM access can use Azure Bastion instead of public VM IPs.
+5. Policy starts in Audit mode; move controls to Deny only after testing.
+6. Secrets do not live in Git. GitHub Actions uses OIDC.
+7. Remote state uses Azure Storage with Entra authentication.
+8. Databases should use private endpoints/private DNS and must not be directly exposed to the Internet.
 
 ## Cost warning
 
-Azure Firewall, Bastion, VPN Gateway, ExpressRoute Gateway, Log Analytics ingestion, Defender for Cloud, public IPs and other platform services can incur charges. The example configuration exposes feature flags so expensive services can be disabled for a lab.
-
-## Reference architecture
-
-```text
-                         Internet
-                            |
-                      Azure Firewall
-                            |
-                    +----------------+
-                    |    Hub VNet    |
-                    | DNS / Bastion  |
-                    | VPN / ER GW    |
-                    | Monitoring     |
-                    +-------+--------+
-                            |
-             +--------------+--------------+
-             |              |              |
-          Dev Spoke     Prod Spoke    Shared Services
-             |              |              |
-        VMs/App/etc.   VMs/AKS/SQL    Backup/Automation
-```
+Azure Firewall, Bastion, VPN Gateway, ExpressRoute Gateway, Log Analytics ingestion, Key Vault and Automation can incur charges. The example environment disables expensive services by default so the repository can be used as a controlled lab starting point.
