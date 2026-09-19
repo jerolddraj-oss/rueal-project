@@ -54,11 +54,7 @@ jobs:
 
       - name: Terraform init
         run: |
-          terraform init -input=false \
-            -backend-config="resource_group_name=${{ secrets.TFSTATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ secrets.TFSTATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ secrets.TFSTATE_CONTAINER }}" \
-            -backend-config="key=landing-zone-${{ inputs.environment }}.tfstate"
+          terraform init -input=false             -backend-config="resource_group_name=${{ secrets.TFSTATE_RESOURCE_GROUP }}"             -backend-config="storage_account_name=${{ secrets.TFSTATE_STORAGE_ACCOUNT }}"             -backend-config="container_name=${{ secrets.TFSTATE_CONTAINER }}"             -backend-config="key=kitchen-${{ inputs.environment }}.tfstate"
 
       - name: Terraform validate
         run: terraform validate
@@ -72,14 +68,21 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
 
+      - name: Checkov IaC scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          quiet: true
+          soft_fail: false
+
       - name: Terraform plan
         run: terraform plan -input=false -out=tfplan
         env:
           TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
-          TF_VAR_root_management_group_id: ${{ secrets.AZURE_TENANT_ID }}
           TF_VAR_environment: ${{ inputs.environment }}
-          TF_VAR_name_prefix: alz-${{ inputs.environment }}
+          TF_VAR_name_prefix: kitchen-${{ inputs.environment }}
 
       - name: Terraform apply
         if: inputs.action == 'apply'
