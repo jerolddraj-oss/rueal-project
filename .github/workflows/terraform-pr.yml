@@ -46,3 +46,11 @@ jobs:
           exit-code: '1'
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+
+      - name: Checkov IaC scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          quiet: true
+          soft_fail: false
